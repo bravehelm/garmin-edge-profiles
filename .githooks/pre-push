@@ -1,0 +1,5 @@
+#!/bin/bash
+# Last check before anything reaches the public repo: every outgoing commit's diff, message and
+# author email, against the denylist (see personal-guard.py). See personal-guard.py.
+PY="py -3"; command -v py >/dev/null 2>&1 || PY=python3
+$PY "$(dirname "$0")/personal-guard.py" push

@@ -1,0 +1,6 @@
+# Device files carry the unit's serial number; never commit them. Tests build synthetic files.
+*.fit
+*.FIT
+__pycache__/
+*.pyc
+.venv/
