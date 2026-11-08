@@ -30,6 +30,13 @@ python -m edgeprof check expected.json Sports/ [--fix staging/]
 in a JSON file, copy `Garmin/Sports/` off the Edge, and run `check`. It prints `ok` or what differs
 and exits 1 on any difference; `--fix DIR` writes corrected copies to put in `Garmin/NewFiles/`.
 
+`check` also reads the firmware version from `Garmin/GarminDevice.xml` (next to the copied `Sports`
+folder, or `--device-xml`). The field locations are only known for the firmware versions listed in
+`edgeprof/settings.py` (`VERIFIED`). On any other version it still reports, but it won't write fixes
+until you re-verify with a one-setting diff (or pass `--trust-firmware`). A firmware update is exactly
+when an undocumented field might move. If you verify a new version or model, a pull request adding it
+to `VERIFIED` helps everyone.
+
 ```json
 {"CyclingGRAVEL.fit": {"climbpro": "off", "hazards": "off", "time_alert_min": 15},
  "CyclingRoadROAD.fit": {"climbpro": "on", "hazards": "off"}}

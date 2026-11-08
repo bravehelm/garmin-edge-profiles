@@ -13,10 +13,35 @@ Garmin doesn't document any of this, so a firmware update can move or rename a f
 """
 from __future__ import annotations
 
+import re
+
 from . import fit
 
 HAZARD_TYPES_ON, HAZARD_TYPES_OFF = 0xFFFFFFFF, 0xFFFFFFE0
 NAMES = ("climbpro", "hazards", "time_alert_min")
+# Firmware versions on which the field locations above were checked by a one-setting diff and a write-back.
+VERIFIED = {"Edge 1040": ("31.33",)}
+
+
+def device_info(xml_text: str) -> tuple[str, str]:
+    """(model, firmware) from a GarminDevice.xml, e.g. ('Edge 1040 Solar', '31.33')."""
+    model = re.search(r"<Model>.*?<Description>(.*?)</Description>", xml_text, re.S)
+    ver = re.search(r"<Model>.*?<SoftwareVersion>(\d+)</SoftwareVersion>", xml_text, re.S)
+    if not model or not ver:
+        raise fit.FitError("GarminDevice.xml has no Model description or SoftwareVersion")
+    v = int(ver.group(1))
+    return model.group(1).strip(), f"{v // 100}.{v % 100:02d}"
+
+
+def firmware_note(model: str, firmware: str) -> tuple[bool, str]:
+    """(verified?, one line) for a device's model and firmware."""
+    for family, versions in VERIFIED.items():
+        if model.startswith(family):
+            if firmware in versions:
+                return True, f"{model}, firmware {firmware}: field locations verified on this version"
+            return False, (f"{model}, firmware {firmware}: field locations verified only on {', '.join(versions)}; "
+                           "re-verify with a one-setting diff before writing any fix")
+    return False, f"{model}, firmware {firmware}: no field locations verified for this model"
 
 
 def _one(f: fit.FitFile, gnum: int) -> fit.Message:

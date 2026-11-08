@@ -158,6 +158,17 @@ def check(args) -> int:
     """Compare every profile named in the expected-state JSON with its copy in `sports`.
     Exit 0 when all match, 1 when any differ. --fix DIR writes corrected copies there (for NewFiles)."""
     expected = json.loads(Path(args.expected).read_text(encoding="utf-8"))
+    xml = Path(args.device_xml) if args.device_xml else Path(args.sports).parent / "GarminDevice.xml"
+    trusted = True
+    if xml.exists():
+        model, firmware = settings.device_info(xml.read_text(encoding="utf-8", errors="replace"))
+        trusted, note = settings.firmware_note(model, firmware)
+        print(note)
+    else:
+        print(f"firmware unknown: no {xml} (copy GarminDevice.xml next to the Sports folder, or pass --device-xml)")
+    if args.fix and not trusted and not args.trust_firmware:
+        print("not writing fixes on an unverified firmware (--trust-firmware to override)", file=sys.stderr)
+        args.fix = None
     bad = 0
     for name, want in expected.items():
         if name.startswith("_"):
@@ -200,6 +211,8 @@ def main(argv=None) -> int:
     s.add_argument("--out", required=True); s.set_defaults(fn=set_)
     s = sub.add_parser("check", help="compare a copied Sports folder with an expected-state JSON")
     s.add_argument("expected"); s.add_argument("sports"); s.add_argument("--fix", help="write corrected copies here")
+    s.add_argument("--device-xml", help="GarminDevice.xml (default: next to the Sports folder)")
+    s.add_argument("--trust-firmware", action="store_true", help="write fixes even on a firmware not yet verified")
     s.set_defaults(fn=check)
     args = p.parse_args(argv)
     try:

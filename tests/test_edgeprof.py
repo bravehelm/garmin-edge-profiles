@@ -141,6 +141,36 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(fit.FitError):
             settings.edits(f, {"autopause": "off"})
 
+    def _xml(self, version):
+        (self.tmp / "GarminDevice.xml").write_text(
+            "<Device><Model><PartNumber>006-B0000-00</PartNumber><SoftwareVersion>%d</SoftwareVersion>"
+            "<Description>Edge 1040 Solar</Description></Model></Device>" % version)
+
+    def test_device_info_and_note(self):
+        self._xml(3133)
+        model, fw = settings.device_info((self.tmp / "GarminDevice.xml").read_text())
+        self.assertEqual((model, fw), ("Edge 1040 Solar", "31.33"))
+        self.assertTrue(settings.firmware_note(model, fw)[0])
+        self.assertFalse(settings.firmware_note(model, "32.05")[0])
+        self.assertFalse(settings.firmware_note("Edge 540", "20.10")[0])
+        self.assertEqual(settings.device_info("<Model><SoftwareVersion>905</SoftwareVersion>"
+                                              "<Description>Edge 1040</Description></Model>")[1], "9.05")
+
+    def test_check_will_not_fix_on_unverified_firmware(self):
+        expected = self.tmp / "expected.json"
+        expected.write_text(json.dumps({"CyclingGRAVEL.fit": {"climbpro": "off"}}))
+        fixdir = self.tmp / "fix"
+        self._xml(3205)   # GarminDevice.xml next to the Sports folder, as copied off the device
+        self.assertEqual(cli.main(["check", str(expected), str(self.sports), "--fix", str(fixdir)]), 1)
+        self.assertFalse(fixdir.exists())
+        self.assertEqual(cli.main(["check", str(expected), str(self.sports), "--fix", str(fixdir),
+                                   "--trust-firmware"]), 1)
+        self.assertTrue((fixdir / "CyclingGRAVEL.fit").exists())
+        self._xml(3133)
+        fixdir2 = self.tmp / "fix2"
+        self.assertEqual(cli.main(["check", str(expected), str(self.sports), "--fix", str(fixdir2)]), 1)
+        self.assertTrue((fixdir2 / "CyclingGRAVEL.fit").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
