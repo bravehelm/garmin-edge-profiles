@@ -4,6 +4,9 @@
     python -m edgeprof dump  Cycling.fit            # every message and field, raw
     python -m edgeprof diff  before.fit after.fit   # what changed between two copies
     python -m edgeprof set-screen Cycling.fit --screen 1 --fields "Speed,Cadence,Timer" --out new.fit
+    python -m edgeprof get   Cycling.fit            # ClimbPro, road hazard warnings, time alert
+    python -m edgeprof set   Cycling.fit --climbpro off --hazards off --time-alert 15 --out new.fit
+    python -m edgeprof check expected.json Sports/ [--fix staging/]
 
 Writing never touches the source file: `set-screen` writes a copy. Put that copy in the Edge's
 `Garmin/NewFiles/` folder and the device imports it at the next start-up.
@@ -11,10 +14,11 @@ Writing never touches the source file: `set-screen` writes a copy. Put that copy
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from . import fit, names
+from . import fit, names, settings
 
 SCREEN, ALERT = 14, 16
 
@@ -118,6 +122,66 @@ def set_screen(args) -> int:
     return 0
 
 
+def get(args) -> int:
+    for k, v in settings.read(_load(args.file)).items():
+        print(f"{k}: {v}")
+    return 0
+
+
+def _want(args) -> dict:
+    want = {}
+    if args.climbpro:
+        want["climbpro"] = args.climbpro
+    if args.hazards:
+        want["hazards"] = args.hazards
+    if args.time_alert:
+        want["time_alert_min"] = "off" if args.time_alert == "off" else float(args.time_alert)
+    return want
+
+
+def set_(args) -> int:
+    want = _want(args)
+    if not want:
+        print("nothing to set: give --climbpro, --hazards or --time-alert", file=sys.stderr)
+        return 2
+    out = Path(args.out)
+    if out.resolve() == Path(args.file).resolve():
+        print("--out must be a new file; the source is never overwritten", file=sys.stderr)
+        return 2
+    f = _load(args.file)
+    out.write_bytes(fit.patch(f, settings.edits(f, want)))
+    print(f"wrote {out}: " + ", ".join(f"{k} {v}" for k, v in settings.read(_load(str(out))).items()))
+    return 0
+
+
+def check(args) -> int:
+    """Compare every profile named in the expected-state JSON with its copy in `sports`.
+    Exit 0 when all match, 1 when any differ. --fix DIR writes corrected copies there (for NewFiles)."""
+    expected = json.loads(Path(args.expected).read_text(encoding="utf-8"))
+    bad = 0
+    for name, want in expected.items():
+        if name.startswith("_"):
+            continue
+        path = Path(args.sports) / name
+        if not path.exists():
+            print(f"{name}: MISSING")
+            bad += 1
+            continue
+        f = _load(str(path))
+        diffs = settings.mismatches(f, want)
+        if not diffs:
+            print(f"{name}: ok")
+            continue
+        bad += 1
+        print(f"{name}: " + "; ".join(f"{k} is {have}, want {v}" for k, v, have in diffs))
+        if args.fix:
+            out = Path(args.fix) / name
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(fit.patch(f, settings.edits(f, {k: v for k, v, _ in diffs})))
+            print(f"  fixed copy: {out}")
+    return 1 if bad else 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="edgeprof", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -128,6 +192,15 @@ def main(argv=None) -> int:
     s.add_argument("file"); s.add_argument("--screen", type=int, required=True)
     s.add_argument("--fields", required=True, help="comma-separated names or numeric IDs")
     s.add_argument("--out", required=True); s.set_defaults(fn=set_screen)
+    s = sub.add_parser("get", help="named settings: ClimbPro, road hazard warnings, time alert")
+    s.add_argument("file"); s.set_defaults(fn=get)
+    s = sub.add_parser("set", help="write a copy with named settings changed")
+    s.add_argument("file"); s.add_argument("--climbpro", choices=("on", "off"))
+    s.add_argument("--hazards", choices=("on", "off")); s.add_argument("--time-alert", help="minutes, or off")
+    s.add_argument("--out", required=True); s.set_defaults(fn=set_)
+    s = sub.add_parser("check", help="compare a copied Sports folder with an expected-state JSON")
+    s.add_argument("expected"); s.add_argument("sports"); s.add_argument("--fix", help="write corrected copies here")
+    s.set_defaults(fn=check)
     args = p.parse_args(argv)
     try:
         return args.fn(args)

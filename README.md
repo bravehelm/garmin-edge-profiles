@@ -8,8 +8,9 @@ An Edge stores each activity profile (data screens, alerts, and more) as a FIT f
 writes an edited copy that the Edge imports from `Garmin/NewFiles/` at its next start-up. That
 import path is the one the device itself declares for these files.
 
-Status: early. Data screens (message 14) and recurring alerts (message 16) are decoded. Everything
-else is shown raw by `dump` and left byte-for-byte untouched by edits.
+Status: early. Data screens (message 14) and recurring alerts (message 16) are decoded, plus two
+on/off settings: ClimbPro and road hazard warnings (below). Everything else is shown raw by `dump`
+and left byte-for-byte untouched by edits.
 
 ## Use
 
@@ -20,8 +21,32 @@ python -m edgeprof show  Cycling.fit             # data screens and recurring al
 python -m edgeprof dump  Cycling.fit             # every message and field, raw
 python -m edgeprof diff  before.fit after.fit    # what changed between two copies
 python -m edgeprof set-screen Cycling.fit --screen 1 --fields "Speed,Cadence,Timer" --out new.fit
+python -m edgeprof get   Cycling.fit             # ClimbPro, road hazard warnings, time alert
+python -m edgeprof set   Cycling.fit --climbpro off --hazards off --time-alert 15 --out new.fit
+python -m edgeprof check expected.json Sports/ [--fix staging/]
 ```
 
+**Keeping settings after a firmware update or reset:** list the settings you want per profile file
+in a JSON file, copy `Garmin/Sports/` off the Edge, and run `check`. It prints `ok` or what differs
+and exits 1 on any difference; `--fix DIR` writes corrected copies to put in `Garmin/NewFiles/`.
+
+```json
+{"CyclingGRAVEL.fit": {"climbpro": "off", "hazards": "off", "time_alert_min": 15},
+ "CyclingRoadROAD.fit": {"climbpro": "on", "hazards": "off"}}
+```
+
+**Named settings** (Edge 1040, firmware 31.33; found by changing one setting on the device and
+diffing; Garmin doesn't document them, so check again after an update):
+
+| Setting | Where | Values |
+|---|---|---|
+| ClimbPro | message 13, field 63 | 1 on, 0 off |
+| Road hazard warnings (master switch) | message 12, field 23 | 1 on, 0 off. Turning it off on the device also clears the low 5 bits of field 25 (0xFFFFFFFF to 0xFFFFFFE0), most likely the five hazard types; `set` does the same |
+| Recurring time alert | message 16, slot with field 1 = 0 | field 2 = interval (ms), field 3 = 1 on, 0 off |
+
+**Restart twice before trusting the menus.** After an import, a written ClimbPro value showed in
+the menu after one restart; a written hazard value showed only after the second. The files were
+right both times.
 **Finding an undocumented setting:** copy the profile file off the Edge, change one setting on the
 device, copy it again, and `diff` the two. The changed message and field is that setting.
 

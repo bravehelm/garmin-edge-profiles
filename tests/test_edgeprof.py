@@ -1,10 +1,11 @@
 """Tests build their own synthetic FIT files; no real device files are used or committed."""
+import json
 import struct
 import tempfile
 import unittest
 from pathlib import Path
 
-from edgeprof import cli, fit
+from edgeprof import cli, fit, settings
 
 
 def _definition(local, gnum, fields):
@@ -72,6 +73,73 @@ class EdgeProfTests(unittest.TestCase):
         bad.write_bytes(b"not a fit file at all")
         with self.assertRaises(fit.FitError):
             fit.parse(bad.read_bytes())
+
+
+def make_settings_profile(climbpro=1, hazards=1, alert_ms=900000, alert_on=1):
+    """A profile with the messages `settings` reads: 12 (f23, f25), 13 (f63) and a type-0 slot in 16."""
+    body = _definition(0, 0, [(0, 1, 0x00), (3, 4, 0x8C)]) + bytes([0, 4]) + struct.pack("<I", 0)
+    body += _definition(1, 12, [(23, 1, 0x00), (25, 4, 0x86)])
+    body += bytes([1]) + struct.pack("<BI", hazards, 0xFFFFFFFF if hazards else 0xFFFFFFE0)
+    body += _definition(2, 13, [(7, 1, 0x00), (63, 1, 0x00)])
+    body += bytes([2]) + struct.pack("<BB", 1, climbpro)
+    body += _definition(3, 16, [(1, 1, 0x00), (2, 4, 0x86), (3, 1, 0x00)])
+    body += bytes([3]) + struct.pack("<BIB", 1, 1609344, 0) + bytes([3]) + struct.pack("<BIB", 0, alert_ms, alert_on)
+    header = bytes([14, 0x20]) + struct.pack("<HI", 2100, len(body)) + b".FIT"
+    header += struct.pack("<H", fit.crc16(header))
+    data = header + body
+    return data + struct.pack("<H", fit.crc16(data))
+
+
+class SettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.sports = self.tmp / "Sports"
+        self.sports.mkdir()
+        (self.sports / "CyclingGRAVEL.fit").write_bytes(make_settings_profile())
+        (self.sports / "CyclingROAD.fit").write_bytes(make_settings_profile(hazards=0, alert_on=0))
+
+    def test_read(self):
+        f = fit.parse((self.sports / "CyclingGRAVEL.fit").read_bytes())
+        self.assertEqual(settings.read(f), {"climbpro": "on", "hazards": "on", "time_alert_min": 15})
+        f = fit.parse((self.sports / "CyclingROAD.fit").read_bytes())
+        self.assertEqual(settings.read(f), {"climbpro": "on", "hazards": "off", "time_alert_min": "off"})
+
+    def test_set_changes_only_the_named_bytes(self):
+        src, out = self.sports / "CyclingGRAVEL.fit", self.tmp / "new.fit"
+        rc = cli.main(["set", str(src), "--climbpro", "off", "--hazards", "off", "--time-alert", "20", "--out", str(out)])
+        self.assertEqual(rc, 0)
+        data = out.read_bytes()
+        self.assertTrue(fit.check_crc(data))
+        self.assertEqual(len(data), len(src.read_bytes()))
+        f = fit.parse(data)
+        self.assertEqual(settings.read(f), {"climbpro": "off", "hazards": "off", "time_alert_min": 20})
+        self.assertEqual(f.of(12)[0].get(25), settings.HAZARD_TYPES_OFF)   # as the device writes it
+        self.assertEqual(f.of(16)[0].get(2), 1609344)                        # other alert slots untouched
+        self.assertEqual(cli.main(["set", str(src), "--out", str(out)]), 2)  # nothing to set
+        self.assertEqual(cli.main(["set", str(src), "--climbpro", "on", "--out", str(src)]), 2)
+
+    def test_check_and_fix(self):
+        expected = self.tmp / "expected.json"
+        want = {"climbpro": "off", "hazards": "off", "time_alert_min": 15}
+        expected.write_text(json.dumps({"_note": "ignored", "CyclingGRAVEL.fit": want,
+                                        "CyclingROAD.fit": {"hazards": "off"}}))
+        fixdir = self.tmp / "fix"
+        self.assertEqual(cli.main(["check", str(expected), str(self.sports), "--fix", str(fixdir)]), 1)
+        self.assertEqual([p.name for p in fixdir.iterdir()], ["CyclingGRAVEL.fit"])   # ROAD already matched
+        fixed = fit.parse((fixdir / "CyclingGRAVEL.fit").read_bytes())
+        self.assertEqual(settings.read(fixed), want)
+        (self.sports / "CyclingGRAVEL.fit").write_bytes((fixdir / "CyclingGRAVEL.fit").read_bytes())
+        self.assertEqual(cli.main(["check", str(expected), str(self.sports)]), 0)
+
+    def test_check_reports_a_missing_profile(self):
+        expected = self.tmp / "expected.json"
+        expected.write_text(json.dumps({"CyclingMTB.fit": {"climbpro": "on"}}))
+        self.assertEqual(cli.main(["check", str(expected), str(self.sports)]), 1)
+
+    def test_unknown_setting_is_refused(self):
+        f = fit.parse((self.sports / "CyclingGRAVEL.fit").read_bytes())
+        with self.assertRaises(fit.FitError):
+            settings.edits(f, {"autopause": "off"})
 
 
 if __name__ == "__main__":
