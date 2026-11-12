@@ -51,6 +51,20 @@ diffing; Garmin doesn't document them, so check again after an update):
 | Road hazard warnings (master switch) | message 12, field 23 | 1 on, 0 off. Turning it off on the device also clears the low 5 bits of field 25 (0xFFFFFFFF to 0xFFFFFFE0), most likely the five hazard types; `set` does the same |
 | Recurring time alert | message 16, slot with field 1 = 0 | field 2 = interval (ms), field 3 = 1 on, 0 off |
 
+**Heart-rate zones** live in `Garmin/Settings/Settings.fit`, not in the profile files. `zones` reads them (read-only):
+
+```
+python -m edgeprof zones Settings.fit
+cycling           max 180  LTHR 154  % max HR  floors 88/108/126/142/162
+                  undocumented: 8=65535  9=0  10=1  11=1  12=1  13=7
+```
+
+Message 7 (one record per sport) holds max HR (field 1), LTHR (2), FTP (3) and how zones are calculated (5, documented in
+Garmin's FIT profile). Message 8 holds the tables: six rows per sport, the floors of zones 1-5 and then the max. Message 7
+also has undocumented fields 8-13. The Edge's zone auto-detect setting is probably one of them, but that isn't verified
+yet. Finding it takes the usual one-setting diff of `Settings.fit`. The Edge declares that settings files (FIT type 2)
+can be imported from `Garmin/NewFiles/`. Writing zones isn't supported yet.
+
 **Restart twice before trusting the menus.** After an import, a written ClimbPro value showed in
 the menu after one restart; a written hazard value showed only after the second. The files were
 right both times.

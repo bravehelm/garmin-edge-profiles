@@ -7,6 +7,7 @@
     python -m edgeprof get   Cycling.fit            # ClimbPro, road hazard warnings, time alert
     python -m edgeprof set   Cycling.fit --climbpro off --hazards off --time-alert 15 --out new.fit
     python -m edgeprof check expected.json Sports/ [--fix staging/]
+    python -m edgeprof zones Settings.fit           # heart-rate zones per sport (read-only)
 
 Writing never touches the source file: `set-screen` writes a copy. Put that copy in the Edge's
 `Garmin/NewFiles/` folder and the device imports it at the next start-up.
@@ -18,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import fit, names, settings
+from . import fit, names, settings, zones
 
 SCREEN, ALERT = 14, 16
 
@@ -193,6 +194,21 @@ def check(args) -> int:
     return 1 if bad else 0
 
 
+def zones_(args) -> int:
+    rows = zones.read(_load(args.file))
+    if not rows:
+        print("no heart-rate zone records (message 7); use the Edge's Garmin/Settings/Settings.fit")
+        return 1
+    for r in rows:
+        floors = "/".join(map(str, r["floors"])) if r["floors"] else "(no table)"
+        line = f"{r['sport']:<17} max {r['max'] or '-':>3}  LTHR {r['lthr'] or '-':>3}  {r['method']:<8}  floors {floors}"
+        if r["table_max"] is not None and r["table_max"] != r["max"]:
+            line += f" (table max {r['table_max']})"
+        print(line)
+        print(f"{'':17} undocumented: " + "  ".join(f"{k}={v}" for k, v in r["other"].items()))
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="edgeprof", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -214,6 +230,8 @@ def main(argv=None) -> int:
     s.add_argument("--device-xml", help="GarminDevice.xml (default: next to the Sports folder)")
     s.add_argument("--trust-firmware", action="store_true", help="write fixes even on a firmware not yet verified")
     s.set_defaults(fn=check)
+    s = sub.add_parser("zones", help="heart-rate zones per sport from Garmin/Settings/Settings.fit (read-only)")
+    s.add_argument("file"); s.set_defaults(fn=zones_)
     args = p.parse_args(argv)
     try:
         return args.fn(args)

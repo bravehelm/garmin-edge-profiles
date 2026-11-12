@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from edgeprof import cli, fit, settings
+from edgeprof import cli, fit, settings, zones
 
 
 def _definition(local, gnum, fields):
@@ -27,6 +27,38 @@ def make_profile(screens, alert_ms=900000):
     header += struct.pack("<H", fit.crc16(header))
     data = header + body
     return data + struct.pack("<H", fit.crc16(data))
+
+
+def make_settings():
+    """A settings file with zones targets for generic (sport 0) and cycling (sport 2) and their HR tables."""
+    body = _definition(0, 0, [(0, 1, 0x00), (3, 4, 0x8C)]) + bytes([0, 2]) + struct.pack("<I", 0)
+    body += _definition(1, 7, [(254, 2, 0x84), (1, 1, 0x02), (2, 1, 0x02), (3, 2, 0x84), (5, 1, 0x00), (11, 1, 0x00)])
+    body += bytes([1]) + struct.pack("<HBBHBB", 0, 172, 150, 200, 3, 0)
+    body += bytes([1]) + struct.pack("<HBBHBB", 2, 180, 154, 154, 1, 1)
+    body += _definition(2, 8, [(254, 2, 0x84), (1, 1, 0x02)])
+    tables = {0: [102, 128, 140, 149, 156, 172], 2: [88, 108, 126, 142, 162, 180]}
+    for sport, vals in tables.items():
+        for i, v in enumerate(vals):
+            body += bytes([2]) + struct.pack("<HB", sport * 6 + i, v)
+    header = bytes([14, 0x20]) + struct.pack("<HI", 2100, len(body)) + b".FIT"
+    header += struct.pack("<H", fit.crc16(header))
+    data = header + body
+    return data + struct.pack("<H", fit.crc16(data))
+
+
+class ZonesTests(unittest.TestCase):
+    def test_read_zones_per_sport(self):
+        rows = zones.read(fit.parse(make_settings()))
+        self.assertEqual([r["sport"] for r in rows], ["generic", "cycling"])
+        g, c = rows
+        self.assertEqual((g["max"], g["lthr"], g["method"], g["floors"]), (172, 150, "% LTHR", [102, 128, 140, 149, 156]))
+        self.assertEqual((c["max"], c["lthr"], c["method"], c["floors"]), (180, 154, "% max HR", [88, 108, 126, 142, 162]))
+        self.assertEqual(c["other"], {11: 1})
+
+    def test_zones_command(self):
+        path = Path(tempfile.mkdtemp()) / "Settings.fit"
+        path.write_bytes(make_settings())
+        self.assertEqual(cli.main(["zones", str(path)]), 0)
 
 
 class EdgeProfTests(unittest.TestCase):

@@ -4,7 +4,9 @@
 # Enable per clone: git config core.hooksPath .githooks
 out=$(mktemp)
 trap 'rm -f "$out"' EXIT
-if command -v wsl.exe >/dev/null 2>&1; then
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --verbose >"$out" 2>&1
+elif command -v wsl.exe >/dev/null 2>&1; then
   # Linked worktrees have a .git *file* pointing at a Windows path (C:/...) that WSL git can't
   # resolve, so gitleaks scanned nothing and still exited 0. Hand WSL translated paths explicitly.
   gd=$(MSYS_NO_PATHCONV=1 wsl.exe -- wslpath -u "$(git rev-parse --absolute-git-dir)" | tr -d '\r')
