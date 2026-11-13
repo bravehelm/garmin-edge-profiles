@@ -32,9 +32,11 @@ def make_profile(screens, alert_ms=900000):
 def make_settings():
     """A settings file with zones targets for generic (sport 0) and cycling (sport 2) and their HR tables."""
     body = _definition(0, 0, [(0, 1, 0x00), (3, 4, 0x8C)]) + bytes([0, 2]) + struct.pack("<I", 0)
-    body += _definition(1, 7, [(254, 2, 0x84), (1, 1, 0x02), (2, 1, 0x02), (3, 2, 0x84), (5, 1, 0x00), (11, 1, 0x00)])
-    body += bytes([1]) + struct.pack("<HBBHBB", 0, 172, 150, 200, 3, 0)
-    body += bytes([1]) + struct.pack("<HBBHBB", 2, 180, 154, 154, 1, 1)
+    body += _definition(3, 2, [(80, 1, 0x00)]) + bytes([3, 1])                     # device_settings: LT auto-detect on
+    body += _definition(1, 7, [(254, 2, 0x84), (1, 1, 0x02), (2, 1, 0x02), (3, 2, 0x84), (5, 1, 0x00), (10, 1, 0x00),
+                               (11, 1, 0x00)])
+    body += bytes([1]) + struct.pack("<HBBHBBB", 0, 172, 150, 200, 3, 1, 0)
+    body += bytes([1]) + struct.pack("<HBBHBBB", 2, 180, 154, 154, 1, 1, 1)
     body += _definition(2, 8, [(254, 2, 0x84), (1, 1, 0x02)])
     tables = {0: [102, 128, 140, 149, 156, 172], 2: [88, 108, 126, 142, 162, 180]}
     for sport, vals in tables.items():
@@ -54,6 +56,21 @@ class ZonesTests(unittest.TestCase):
         self.assertEqual((g["max"], g["lthr"], g["method"], g["floors"]), (172, 150, "% LTHR", [102, 128, 140, 149, 156]))
         self.assertEqual((c["max"], c["lthr"], c["method"], c["floors"]), (180, 154, "% max HR", [88, 108, 126, 142, 162]))
         self.assertEqual(c["other"], {11: 1})
+        self.assertEqual(c["max_autodetect"], "on")
+
+    def test_set_zones_turns_auto_detect_off(self):
+        tmp = Path(tempfile.mkdtemp())
+        src, out = tmp / "Settings.fit", tmp / "new.fit"
+        src.write_bytes(make_settings())
+        rc = cli.main(["set-zones", str(src), "--lt-autodetect", "off", "--max-autodetect", "off", "--out", str(out)])
+        self.assertEqual(rc, 0)
+        data = out.read_bytes()
+        self.assertTrue(fit.check_crc(data))
+        self.assertEqual(len(data), len(src.read_bytes()))
+        f = fit.parse(data)
+        self.assertEqual(zones.lt_autodetect(f), "off")
+        self.assertEqual({r["sport"]: r["max_autodetect"] for r in zones.read(f)}, {"generic": "on", "cycling": "off"})
+        self.assertEqual(cli.main(["set-zones", str(src), "--lt-autodetect", "off", "--out", str(src)]), 2)
 
     def test_zones_command(self):
         path = Path(tempfile.mkdtemp()) / "Settings.fit"

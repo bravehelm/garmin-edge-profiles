@@ -7,7 +7,8 @@
     python -m edgeprof get   Cycling.fit            # ClimbPro, road hazard warnings, time alert
     python -m edgeprof set   Cycling.fit --climbpro off --hazards off --time-alert 15 --out new.fit
     python -m edgeprof check expected.json Sports/ [--fix staging/]
-    python -m edgeprof zones Settings.fit           # heart-rate zones per sport (read-only)
+    python -m edgeprof zones Settings.fit           # heart-rate zones per sport and the auto-detect switches
+    python -m edgeprof set-zones Settings.fit --lt-autodetect off --max-autodetect off --out new.fit
 
 Writing never touches the source file: `set-screen` writes a copy. Put that copy in the Edge's
 `Garmin/NewFiles/` folder and the device imports it at the next start-up.
@@ -92,7 +93,7 @@ def diff(args) -> int:
             continue
         for n in sorted(set(ma.fields) | set(mb.fields)):
             va, vb = ma.get(n), mb.get(n)
-            if va != vb:
+            if va != vb and not (va != va and vb != vb):     # nan != nan: the same blank value, not a change
                 print(f"{label} field {n}: {va} -> {vb}")
                 changes += 1
     print(f"{changes} difference(s)" if changes else "no differences")
@@ -195,7 +196,8 @@ def check(args) -> int:
 
 
 def zones_(args) -> int:
-    rows = zones.read(_load(args.file))
+    f = _load(args.file)
+    rows = zones.read(f)
     if not rows:
         print("no heart-rate zone records (message 7); use the Edge's Garmin/Settings/Settings.fit")
         return 1
@@ -204,8 +206,25 @@ def zones_(args) -> int:
         line = f"{r['sport']:<17} max {r['max'] or '-':>3}  LTHR {r['lthr'] or '-':>3}  {r['method']:<8}  floors {floors}"
         if r["table_max"] is not None and r["table_max"] != r["max"]:
             line += f" (table max {r['table_max']})"
-        print(line)
+        print(line + f"  max HR auto-detect {r['max_autodetect']}")
         print(f"{'':17} undocumented: " + "  ".join(f"{k}={v}" for k, v in r["other"].items()))
+    print(f"lactate threshold auto-detect (all sports): {zones.lt_autodetect(f)}")
+    return 0
+
+
+def set_zones(args) -> int:
+    if args.lt_autodetect is None and args.max_autodetect is None:
+        print("nothing to set: give --lt-autodetect or --max-autodetect", file=sys.stderr)
+        return 2
+    out = Path(args.out)
+    if out.resolve() == Path(args.file).resolve():
+        print("--out must be a new file; the source is never overwritten", file=sys.stderr)
+        return 2
+    f = _load(args.file)
+    out.write_bytes(fit.patch(f, zones.edits(f, args.lt_autodetect, args.max_autodetect, args.sport)))
+    g = _load(str(out))
+    mx = next((r["max_autodetect"] for r in zones.read(g) if r["sport"] == args.sport), "-")
+    print(f"wrote {out}: lactate threshold auto-detect {zones.lt_autodetect(g)}, {args.sport} max HR auto-detect {mx}")
     return 0
 
 
@@ -232,6 +251,11 @@ def main(argv=None) -> int:
     s.set_defaults(fn=check)
     s = sub.add_parser("zones", help="heart-rate zones per sport from Garmin/Settings/Settings.fit (read-only)")
     s.add_argument("file"); s.set_defaults(fn=zones_)
+    s = sub.add_parser("set-zones", help="write a copy of Settings.fit with the auto-detect switches changed")
+    s.add_argument("file"); s.add_argument("--lt-autodetect", choices=("on", "off"))
+    s.add_argument("--max-autodetect", choices=("on", "off"))
+    s.add_argument("--sport", default="cycling", choices=sorted(zones.SPORTS.values()), help="for --max-autodetect")
+    s.add_argument("--out", required=True); s.set_defaults(fn=set_zones)
     args = p.parse_args(argv)
     try:
         return args.fn(args)

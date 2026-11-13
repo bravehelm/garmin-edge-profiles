@@ -8,7 +8,8 @@ An Edge stores each activity profile (data screens, alerts, and more) as a FIT f
 writes an edited copy that the Edge imports from `Garmin/NewFiles/` at its next start-up. That
 import path is the one the device itself declares for these files.
 
-Status: early. Data screens (message 14) and recurring alerts (message 16) are decoded, plus two
+Status: early. Data screens (message 14) and recurring alerts (message 16) are decoded, plus heart-rate
+zones and their auto-detect switches (in `Settings.fit`, below), and two
 on/off settings: ClimbPro and road hazard warnings (below). Everything else is shown raw by `dump`
 and left byte-for-byte untouched by edits.
 
@@ -51,19 +52,29 @@ diffing; Garmin doesn't document them, so check again after an update):
 | Road hazard warnings (master switch) | message 12, field 23 | 1 on, 0 off. Turning it off on the device also clears the low 5 bits of field 25 (0xFFFFFFFF to 0xFFFFFFE0), most likely the five hazard types; `set` does the same |
 | Recurring time alert | message 16, slot with field 1 = 0 | field 2 = interval (ms), field 3 = 1 on, 0 off |
 
-**Heart-rate zones** live in `Garmin/Settings/Settings.fit`, not in the profile files. `zones` reads them (read-only):
+**Heart-rate zones and auto-detect** live in `Garmin/Settings/Settings.fit`, not in the profile files. With auto-detect
+on, the Edge raises max HR and LTHR on its own after rides, and Garmin Connect then syncs those raised values to your
+other devices. `zones` shows the zones and both switches; `set-zones` writes a copy with the switches changed:
 
 ```
 python -m edgeprof zones Settings.fit
-cycling           max 180  LTHR 154  % max HR  floors 88/108/126/142/162
-                  undocumented: 8=65535  9=0  10=1  11=1  12=1  13=7
+cycling           max 172  LTHR 150  % LTHR    floors 102/128/140/149/156  max HR auto-detect off
+                  undocumented: 8=65535  9=0  11=1  12=1  13=7
+lactate threshold auto-detect (all sports): off
+python -m edgeprof set-zones Settings.fit --lt-autodetect off --max-autodetect off --out new.fit
 ```
 
-Message 7 (one record per sport) holds max HR (field 1), LTHR (2), FTP (3) and how zones are calculated (5, documented in
-Garmin's FIT profile). Message 8 holds the tables: six rows per sport, the floors of zones 1-5 and then the max. Message 7
-also has undocumented fields 8-13. The Edge's zone auto-detect setting is probably one of them, but that isn't verified
-yet. Finding it takes the usual one-setting diff of `Settings.fit`. The Edge declares that settings files (FIT type 2)
-can be imported from `Garmin/NewFiles/`. Writing zones isn't supported yet.
+| Setting | Where | Values |
+|---|---|---|
+| Lactate threshold auto-detect | message 2, field 80 (named `lactate_threshold_autodetect_enabled` in Garmin's FIT profile) | 1 on, 0 off |
+| Max HR auto-detect | message 7, field 10 of the sport's record (cycling by default; `--sport`) | 1 on, 0 off |
+| Max HR, LTHR, FTP, zone method | message 7, fields 1, 2, 3, 5 (documented) | read only |
+| Zone tables | message 8, six rows per sport: floors of zones 1-5, then max | read only |
+
+Both switches were found on an Edge 1040 (firmware 31.33) by turning them off in the device's menu and diffing
+`Settings.fit`. `set-zones` on the before-copy produced the same two changed bytes. The Edge declares that settings
+files (FIT type 2) can be imported from `Garmin/NewFiles/`. Only edit a copy taken off the Edge just before: the file
+also holds sensors, bikes and the user profile, and an old copy would roll those back.
 
 **Restart twice before trusting the menus.** After an import, a written ClimbPro value showed in
 the menu after one restart; a written hazard value showed only after the second. The files were
